@@ -1,0 +1,500 @@
+openapi: 3.1.0
+
+info:
+  title: Meridian Research API
+  version: 0.1.0
+  description: >
+    Autonomous market intelligence API.
+    A client submits a research question, receives a session ID, and streams
+    live agent trace events via Server-Sent Events while the report is generated.
+  contact:
+    name: Meridian Engineering
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://api.meridian-research.com
+    description: Production (Railway)
+
+tags:
+  - name: research
+    description: Research session lifecycle
+
+# Milestone 1: no authentication. All endpoints are unauthenticated.
+# Security schemes (Supabase JWT) are defined here for documentation purposes
+# and will be activated in the auth milestone.
+# security: []
+
+paths:
+
+  /api/research/create:
+    post:
+      operationId: createResearchSession
+      summary: Submit a research question and create a session
+      description: >
+        Validates the research question, creates a research_sessions row with
+        status "queued", enqueues the session UUID to the Redis task queue,
+        and returns the session UUID immediately.
+        The caller should immediately open the SSE stream endpoint to receive
+        live progress events.
+      tags:
+        - research
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateResearchRequest'
+            examples:
+              basic:
+                summary: Typical research question
+                value:
+                  question: "What are the competitive dynamics in the B2B SaaS CRM market in 2026?"
+              detailed:
+                summary: Question with optional metadata
+                value:
+                  question: "Analyze the electric vehicle battery supply chain risks for North American OEMs"
+      responses:
+        '202':
+          description: >
+            Session accepted and queued. Returns session_id to use for SSE streaming
+            and result retrieval. HTTP 202 (not 201) because processing is async.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateResearchResponse'
+              example:
+                session_id: "550e8400-e29b-41d4-a716-446655440000"
+                status: "queued"
+                stream_url: "/api/research/550e8400-e29b-41d4-a716-446655440000/stream"
+        '400':
+          description: >
+            Request body is structurally valid JSON but fails business validation
+            (e.g. question too short, question too long).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "validation_error"
+                detail: "question must be between 10 and 2000 characters"
+                fields:
+                  question: "Must be between 10 and 2000 characters. Got 4."
+        '422':
+          description: >
+            Request body is malformed or missing required fields.
+            FastAPI/Pydantic validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PydanticValidationError'
+        '500':
+          description: Internal server error (database or Redis unavailable).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal_error"
+                detail: "Failed to enqueue session. Please retry."
+                fields: null
+
+  /api/research/{session_id}/stream:
+    get:
+      operationId: streamResearchSession
+      summary: Stream live agent trace events for a session (SSE)
+      description: >
+        Opens a Server-Sent Events (SSE) connection and streams all agent_events
+        for the given session in real time.
+
+        **Connection lifecycle:**
+        1. On connect, the server first replays all agent_events already stored for
+           the session (in sequence_number order), so a late-connecting or
+           reconnecting client receives the full history.
+        2. The server then subscribes to the Redis pub/sub channel for this session
+           and forwards new events as they are published.
+        3. When the "done" event is forwarded, the server closes the SSE connection.
+        4. If the session is already in status "completed" or "failed" when the
+           client connects, the server replays all stored events, sends a final
+           "done" or "error" event, and closes immediately.
+
+        **Reconnection:**
+        Clients must send the `Last-Event-ID` header on reconnect. The server
+        will replay only events with sequence_number > Last-Event-ID value.
+
+        **Event format (each SSE event):**
+        ```
+        id: {sequence_number}
+        event: agent_event
+        data: {JSON-encoded AgentEventData}
+
+        ```
+        Two trailing newlines terminate each event.
+        See AgentEventData schema for the data field structure.
+      tags:
+        - research
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: UUID of the research session returned by /api/research/create
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: >
+            Last SSE event ID received by the client. Used for reconnection.
+            Server replays events with sequence_number > this value.
+            Omit on initial connection.
+          schema:
+            type: string
+            pattern: '^\d+$'
+          example: "17"
+      responses:
+        '200':
+          description: >
+            SSE stream opened successfully.
+            Content-Type is text/event-stream.
+            The response body is a continuous stream of SSE events.
+            Connection stays open until the "done" event is sent or the session fails.
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                enum:
+                  - text/event-stream
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-cache
+            X-Accel-Buffering:
+              description: Disables Nginx response buffering for SSE
+              schema:
+                type: string
+                enum:
+                  - "no"
+          content:
+            text/event-stream:
+              schema:
+                description: >
+                  A stream of SSE events. Each event's data field is a JSON-encoded
+                  AgentEventData object.
+                type: string
+                format: binary
+              examples:
+                agent_started:
+                  summary: Agent started event
+                  value: |
+                    id: 1
+                    event: agent_event
+                    data: {"agent_type":"planner","event_type":"agent_started","sequence_number":1,"timestamp":"2026-01-15T10:23:44.123Z","payload":{"agent":"planner"}}
+
+                sub_task_completed:
+                  summary: Sub-task completed event
+                  value: |
+                    id: 7
+                    event: agent_event
+                    data: {"agent_type":"web_search","event_type":"sub_task_completed","sequence_number":7,"timestamp":"2026-01-15T10:23:51.456Z","payload":{"sub_task_index":0,"source_count":8,"status":"ok","error":null}}
+
+                report_chunk:
+                  summary: Writer streaming a chunk
+                  value: |
+                    id: 42
+                    event: agent_event
+                    data: {"agent_type":"writer","event_type":"report_chunk","sequence_number":42,"timestamp":"2026-01-15T10:24:10.789Z","payload":{"chunk":"The competitive landscape in B2B SaaS CRM","chunk_index":0}}
+
+                done:
+                  summary: Terminal done event
+                  value: |
+                    id: 87
+                    event: agent_event
+                    data: {"agent_type":"writer","event_type":"done","sequence_number":87,"timestamp":"2026-01-15T10:24:35.000Z","payload":{"session_id":"550e8400-e29b-41d4-a716-446655440000","word_count":2341}}
+
+        '400':
+          description: session_id is not a valid UUID format.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "validation_error"
+                detail: "session_id must be a valid UUID"
+                fields:
+                  session_id: "Invalid UUID format"
+        '404':
+          description: No session exists with the given session_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "not_found"
+                detail: "Session 550e8400-e29b-41d4-a716-446655440000 does not exist"
+                fields: null
+        '422':
+          description: Path parameter type validation failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PydanticValidationError'
+        '500':
+          description: Internal server error (database or Redis unavailable).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/research/{session_id}:
+    get:
+      operationId: getResearchSession
+      summary: Retrieve a completed research session and its report
+      description: >
+        Returns the current state of a research session.
+        For completed sessions, includes the full report_markdown.
+        This endpoint is used by the frontend after receiving the "done" SSE event,
+        and also as a fallback for clients that connect after session completion.
+      tags:
+        - research
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: UUID of the research session
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Session found. report_markdown is non-null only when status is "completed".
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchSessionResponse'
+        '404':
+          description: Session not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Invalid UUID format.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PydanticValidationError'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+
+    CreateResearchRequest:
+      type: object
+      required:
+        - question
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          minLength: 10
+          maxLength: 2000
+          description: >
+            The business research question to investigate.
+            Must be a natural-language question or topic description.
+          example: "What are the competitive dynamics in the B2B SaaS CRM market in 2026?"
+
+    CreateResearchResponse:
+      type: object
+      required:
+        - session_id
+        - status
+        - stream_url
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          description: UUID of the created research session. Use this to open the SSE stream.
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        status:
+          type: string
+          enum:
+            - queued
+          description: Always "queued" on creation.
+          example: "queued"
+        stream_url:
+          type: string
+          description: Relative URL of the SSE stream endpoint for this session.
+          example: "/api/research/550e8400-e29b-41d4-a716-446655440000/stream"
+
+    ResearchSessionResponse:
+      type: object
+      required:
+        - session_id
+        - question
+        - status
+        - created_at
+        - updated_at
+      properties:
+        session_id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        question:
+          type: string
+          example: "What are the competitive dynamics in the B2B SaaS CRM market in 2026?"
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - completed
+            - failed
+          example: "completed"
+        report_markdown:
+          type: string
+          nullable: true
+          description: >
+            Full markdown report. Non-null only when status is "completed".
+          example: "# Market Intelligence Report\n\n## Executive Summary\n..."
+        error_message:
+          type: string
+          nullable: true
+          description: Human-readable error description. Non-null only when status is "failed".
+          example: null
+        sub_tasks:
+          type: array
+          nullable: true
+          description: Sub-task strings produced by the Planner agent. Null until Planner completes.
+          items:
+            type: string
+          example:
+            - "Salesforce competitive positioning and market share 2026"
+            - "HubSpot vs Salesforce feature comparison"
+            - "Emerging CRM startups and funding activity"
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:23:40.000Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:24:35.000Z"
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-01-15T10:24:35.000Z"
+
+    AgentEventData:
+      type: object
+      description: >
+        The data field of each SSE event. Discriminated by event_type.
+        See ADR-003 for payload schemas per event_type.
+      required:
+        - agent_type
+        - event_type
+        - sequence_number
+        - timestamp
+        - payload
+      properties:
+        agent_type:
+          type: string
+          enum:
+            - planner
+            - web_search
+            - etl
+            - writer
+            - system
+        event_type:
+          type: string
+          enum:
+            - agent_started
+            - agent_completed
+            - agent_failed
+            - sub_task_started
+            - sub_task_completed
+            - source_fetched
+            - etl_progress
+            - report_chunk
+            - done
+            - error
+        sequence_number:
+          type: integer
+          minimum: 1
+          description: Monotonically increasing per session. Used as SSE event id for reconnection.
+        timestamp:
+          type: string
+          format: date-time
+          description: UTC timestamp when the event was created by the agent.
+        payload:
+          type: object
+          description: >
+            Event-specific data. Structure depends on event_type.
+            See ADR-003 for per-event payload schemas.
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - detail
+      properties:
+        error:
+          type: string
+          enum:
+            - validation_error
+            - not_found
+            - internal_error
+          description: Machine-readable error code.
+          example: "validation_error"
+        detail:
+          type: string
+          description: Human-readable error description.
+          example: "question must be between 10 and 2000 characters"
+        fields:
+          type: object
+          nullable: true
+          description: Field-level error details for validation errors.
+          additionalProperties:
+            type: string
+          example:
+            question: "Must be between 10 and 2000 characters. Got 4."
+
+    PydanticValidationError:
+      type: object
+      description: FastAPI/Pydantic 422 validation error format.
+      required:
+        - detail
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            required:
+              - loc
+              - msg
+              - type
+            properties:
+              loc:
+                type: array
+                items:
+                  type: string
+                example: ["body", "question"]
+              msg:
+                type: string
+                example: "String should have at least 10 characters"
+              type:
+                type: string
+                example: "string_too_short"
+              url:
+                type: string
+                example: "https://errors.pydantic.dev/2.0/v/string_too_short"
