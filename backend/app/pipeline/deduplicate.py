@@ -1,4 +1,5 @@
 import re
+import time
 
 import duckdb
 import structlog
@@ -37,7 +38,12 @@ def _make_minhash(text: str) -> MinHash:
     return m
 
 
-def deduplicate(con: duckdb.DuckDBPyConnection) -> int:
+def deduplicate(
+    con: duckdb.DuckDBPyConnection,
+    session_id: str = "",
+    threshold: float = JACCARD_THRESHOLD,
+) -> int:
+    t0 = time.perf_counter()
     con.execute(CREATE_DEDUPED)
 
     rows = con.execute(
@@ -46,7 +52,7 @@ def deduplicate(con: duckdb.DuckDBPyConnection) -> int:
     ).fetchall()
     records_in = len(rows)
 
-    lsh = MinHashLSH(threshold=JACCARD_THRESHOLD, num_perm=NUM_PERM)
+    lsh = MinHashLSH(threshold=threshold, num_perm=NUM_PERM)
     keep: list[tuple[str, ...]] = []
     dropped = 0
 
@@ -71,13 +77,16 @@ def deduplicate(con: duckdb.DuckDBPyConnection) -> int:
         con.executemany("INSERT INTO deduped_sources VALUES (?, ?, ?, ?, ?, ?, ?, ?)", new_rows)
 
     records_out = int(con.execute("SELECT COUNT(*) FROM deduped_sources").fetchone()[0])  # type: ignore[index]
+    duration_ms = (time.perf_counter() - t0) * 1000
 
     logger.info(
-        "pipeline.deduplicate",
+        "pipeline_stage_complete",
         stage_name="deduplicate",
+        session_id=session_id,
         records_in=records_in,
         records_out=records_out,
         records_dropped=dropped,
-        reason="near_duplicate_minhash" if dropped > 0 else None,
+        drop_reason="near_duplicate_minhash" if dropped > 0 else None,
+        duration_ms=duration_ms,
     )
     return records_out

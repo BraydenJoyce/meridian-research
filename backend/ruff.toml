@@ -19,6 +19,7 @@ select = [
 ignore = [
     "S101",    # use of assert (fine in tests)
     "B008",    # fastapi Depends() in function defaults is the documented pattern
+    "ANN401",  # Any return type allowed for lazy-loaded third-party models
 ]
 
 [lint.per-file-ignores]

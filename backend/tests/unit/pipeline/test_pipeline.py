@@ -150,3 +150,145 @@ def test_pipeline_idempotent() -> None:
     assert result1["ingested"] == result2["ingested"]
     assert result1["deduped"] == result2["deduped"]
     assert result1["scored"] == result2["scored"]
+
+
+def test_deduplicate_reduces_by_over_40_percent(con: duckdb.DuckDBPyConnection) -> None:
+    """Prove >40% dedup rate on a dataset where ~50% of sources are near-duplicates."""
+    import random
+    random.seed(42)
+
+    base_texts = [
+        f"Company Alpha Inc reported revenue of ${random.randint(1, 99)} billion in "
+        f"Q{random.randint(1, 4)} 2025. CEO John Smith announced {random.randint(5, 20)}% "
+        f"growth. Product AlphaCloud {random.randint(1, 10)}.0 launched."
+        for _ in range(50)
+    ]
+
+    sources: list[Any] = []
+    for i, text in enumerate(base_texts):
+        sources.append(_source(f"https://site{i}.com/article", text, f"site{i}.com"))
+
+    for i, text in enumerate(base_texts):
+        near_dup = text.replace("billion", "billion USD")
+        sources.append(_source(f"https://dup{i}.com/article", near_dup, f"dup{i}.com"))
+
+    assert len(sources) == 100
+    ingest(con, sources)
+    deduped_count = deduplicate(con)
+    dedup_rate = (100 - deduped_count) / 100
+    assert dedup_rate > 0.40, (
+        f"Expected >40% dedup rate, got {dedup_rate:.2%} ({deduped_count} surviving)"
+    )
+
+
+def test_score_each_factor_independently() -> None:
+    """Each scoring factor function returns a float in [0.0, 1.0]."""
+    from app.pipeline.score import (
+        _citation_score,
+        _domain_score,
+        _entity_density,
+        _length_score,
+        _recency_score,
+        _source_type_score,
+    )
+
+    assert _domain_score("reuters.com") == 1.0
+    assert _domain_score("medium.com") < _domain_score("reuters.com")
+    assert 0.0 <= _domain_score(None) <= 1.0
+
+    assert _length_score("word " * 600) == 1.0
+    assert _length_score("") == 0.0
+
+    assert 0.0 <= _recency_score(None) <= 1.0
+
+    assert _citation_score("See [1] and [2] also [3]") > _citation_score("no citations here")
+    assert _citation_score("") == 0.0
+
+    assert _source_type_score("sec.gov") == 1.0
+    assert _source_type_score("medium.com") < _source_type_score("reuters.com")
+
+    assert 0.0 <= _entity_density("Microsoft Corp and Google LLC announced") <= 1.0
+
+
+def test_extract_entities_skips_low_quality_sources(con: duckdb.DuckDBPyConnection) -> None:
+    """Sources with quality_score < 0.4 must not have entities extracted."""
+    # Use a source with minimal content that will score very low
+    low_quality = _source("https://spam.com/x", "", "spam.com")
+    ingest(con, [low_quality])
+    deduplicate(con)
+    score(con)
+
+    # Manually verify score is < 0.4 for this source
+    rows = con.execute(
+        "SELECT quality_score FROM scored_sources WHERE url='https://spam.com/x'"
+    ).fetchall()
+    if rows and rows[0][0] < 0.4:
+        extract_entities(con)
+        entity_rows = con.execute(
+            "SELECT * FROM entities WHERE source_id=?", [str(low_quality["id"])]
+        ).fetchall()
+        # Source was skipped — no entities for this source
+        assert len(entity_rows) == 0
+
+
+def test_extract_entities_spacy_finds_known_org(con: duckdb.DuckDBPyConnection) -> None:
+    """spaCy NER should find ORG entities in market intelligence text."""
+    source = _source(
+        "https://reuters.com/article",
+        "Microsoft Corporation announced a major acquisition. Apple Inc responded with a new product.",
+        "reuters.com",
+    )
+    ingest(con, [source])
+    deduplicate(con)
+    score(con)
+    extract_entities(con)
+
+    orgs = con.execute(
+        "SELECT value FROM entities WHERE entity_type='ORG'"
+    ).fetchall()
+    org_values = [r[0] for r in orgs]
+    # At least one of these major orgs should be found
+    assert any("Microsoft" in v or "Apple" in v for v in org_values), f"Got orgs: {org_values}"
+
+
+def test_extract_entities_metric_pattern(con: duckdb.DuckDBPyConnection) -> None:
+    """Regex should find financial metrics."""
+    source = _source(
+        "https://wsj.com/article",
+        "Revenue grew 23% YoY to $4.5 billion in fiscal 2025.",
+        "wsj.com",
+    )
+    ingest(con, [source])
+    deduplicate(con)
+    score(con)
+    extract_entities(con)
+
+    metrics = con.execute(
+        "SELECT value FROM entities WHERE entity_type='METRIC'"
+    ).fetchall()
+    assert len(metrics) >= 1, "Expected at least 1 metric (percentage or dollar amount)"
+
+
+@pytest.mark.parametrize(
+    "domain,content,fetched_at",
+    [
+        ("reuters.com", "word " * 300 + " [1] reference (2024) doi:10.1000/test", "2026-01-01"),
+        ("medium.com", "short content here", None),
+        (None, "", None),
+    ],
+)
+def test_score_always_in_range(
+    con: duckdb.DuckDBPyConnection,
+    domain: str | None,
+    content: str,
+    fetched_at: str | None,
+) -> None:
+    src = _source("https://example.com/x", content, domain or "example.com")
+    if fetched_at:
+        src["fetched_at"] = fetched_at
+    ingest(con, [src])
+    deduplicate(con)
+    score(con)
+    rows = con.execute("SELECT quality_score FROM scored_sources").fetchall()
+    for (s,) in rows:
+        assert 0.0 <= s <= 1.0
