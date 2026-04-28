@@ -1,3 +1,4 @@
+import time
 import uuid
 from typing import Any
 
@@ -20,7 +21,12 @@ CREATE TABLE IF NOT EXISTS raw_sources (
 """
 
 
-def ingest(con: duckdb.DuckDBPyConnection, sources: list[dict[str, Any]]) -> int:
+def ingest(
+    con: duckdb.DuckDBPyConnection,
+    sources: list[dict[str, Any]],
+    session_id: str = "",
+) -> int:
+    t0 = time.perf_counter()
     con.execute(CREATE_RAW_SOURCES)
 
     records_in = len(sources)
@@ -52,14 +58,18 @@ def ingest(con: duckdb.DuckDBPyConnection, sources: list[dict[str, Any]]) -> int
 
     records_out = int(con.execute("SELECT COUNT(*) FROM raw_sources").fetchone()[0])  # type: ignore[index]
     records_dropped = records_in - len(rows)
+    duration_ms = (time.perf_counter() - t0) * 1000.0
 
     logger.info(
-        "pipeline.ingest",
+        "pipeline_stage_complete",
         stage_name="ingest",
+        session_id=session_id,
         records_in=records_in,
         records_out=records_out,
         records_dropped=records_dropped,
-        reason="duplicate_id" if records_dropped > 0 else None,
+        drop_reason="duplicate_id" if records_dropped > 0 else None,
+        duration_ms=duration_ms,
+        extra={"table": "raw_sources"},
     )
     return records_out
 

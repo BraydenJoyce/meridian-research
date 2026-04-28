@@ -5,6 +5,7 @@ from typing import Any
 
 import anthropic
 import structlog
+from qdrant_client import QdrantClient
 
 from app.agents.base import AgentEvent, AgentFatalError, EventEmitter, ResearchAgent
 
@@ -35,9 +36,15 @@ Rules:
 
 
 class PlannerAgent(ResearchAgent):
-    def __init__(self, session_id: uuid.UUID, emitter: EventEmitter) -> None:
+    def __init__(
+        self,
+        session_id: uuid.UUID,
+        emitter: EventEmitter,
+        qdrant_client: QdrantClient | None = None,
+    ) -> None:
         super().__init__(session_id, emitter)
         self._client = anthropic.AsyncAnthropic()
+        self._qdrant_client = qdrant_client
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         question: str = input_data["question"]
@@ -49,7 +56,24 @@ class PlannerAgent(ResearchAgent):
             payload={"agent": "planner"},
         ))
 
-        sub_tasks = await self._decompose_with_retry(question)
+        rag_sources: list[Any] = []
+        if self._qdrant_client is not None:
+            from app.services.rag_service import get_context
+
+            rag_sources = get_context(question, self._qdrant_client)
+
+        effective_system = SYSTEM_PROMPT
+        if rag_sources:
+            ctx_lines = "\n".join(
+                f"- [{s.url}]: {s.content_snippet}" for s in rag_sources[:5]
+            )
+            rag_header = (
+                "\n\nRelevant prior research context"
+                " (use to inform your sub-task selection):\n"
+            )
+            effective_system = SYSTEM_PROMPT + rag_header + ctx_lines
+
+        sub_tasks = await self._decompose_with_retry(question, effective_system)
 
         await self.emitter.emit(AgentEvent(
             session_id=self.session_id,
@@ -61,12 +85,14 @@ class PlannerAgent(ResearchAgent):
         logger.info("planner.completed", session_id=str(self.session_id), count=len(sub_tasks))
         return {"sub_tasks": sub_tasks}
 
-    async def _decompose_with_retry(self, question: str) -> list[str]:
+    async def _decompose_with_retry(
+        self, question: str, system_prompt: str = SYSTEM_PROMPT
+    ) -> list[str]:
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                sub_tasks = await self._call_llm(question)
+                sub_tasks = await self._call_llm(question, system_prompt)
                 self._validate(sub_tasks)
                 return sub_tasks
             except AgentFatalError:
@@ -89,14 +115,16 @@ class PlannerAgent(ResearchAgent):
         ))
         raise AgentFatalError(f"Planner failed after {MAX_RETRIES + 1} attempts: {last_error}")
 
-    async def _call_llm(self, question: str) -> list[str]:
+    async def _call_llm(
+        self, question: str, system_prompt: str = SYSTEM_PROMPT
+    ) -> list[str]:
         response = await self._client.messages.create(
             model=PLANNER_MODEL,
             max_tokens=1024,
             system=[
                 {
                     "type": "text",
-                    "text": SYSTEM_PROMPT,
+                    "text": system_prompt,
                     "cache_control": {"type": "ephemeral"},
                 }
             ],

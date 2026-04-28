@@ -1,3 +1,4 @@
+import time
 from typing import Any
 
 import duckdb
@@ -17,10 +18,11 @@ def run_pipeline(
     sources: list[dict[str, Any]],
     qdrant_client: QdrantClient | None = None,
 ) -> dict[str, Any]:
+    t0 = time.perf_counter()
     con = duckdb.connect()
     session_id = str(sources[0]["session_id"]) if sources else ""
     try:
-        ingested = ingest(con, sources)
+        ingested = ingest(con, sources, session_id=session_id)
         deduped = deduplicate(con, session_id=session_id)
         scored = score(con, session_id=session_id)
         entity_count = extract_entities(con, session_id=session_id)
@@ -29,13 +31,18 @@ def run_pipeline(
         if qdrant_client is not None:
             indexed = index(con, qdrant_client, session_id=session_id)
 
+        duration_ms = (time.perf_counter() - t0) * 1000.0
         logger.info(
-            "pipeline.completed",
-            ingested=ingested,
-            deduped=deduped,
-            scored=scored,
-            entity_count=entity_count,
-            indexed=indexed,
+            "pipeline_complete",
+            session_id=session_id,
+            duration_ms=duration_ms,
+            stages={
+                "ingested": ingested,
+                "deduped": deduped,
+                "scored": scored,
+                "entities": entity_count,
+                "indexed": indexed,
+            },
         )
         return {
             "ingested": ingested,

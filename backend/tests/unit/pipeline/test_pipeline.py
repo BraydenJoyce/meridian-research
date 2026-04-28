@@ -235,7 +235,7 @@ def test_extract_entities_spacy_finds_known_org(con: duckdb.DuckDBPyConnection) 
     """spaCy NER should find ORG entities in market intelligence text."""
     source = _source(
         "https://reuters.com/article",
-        "Microsoft Corporation announced a major acquisition. Apple Inc responded with a new product.",
+        "Microsoft Corporation announced a major acquisition. Apple Inc responded with a new product.",  # noqa: E501
         "reuters.com",
     )
     ingest(con, [source])
