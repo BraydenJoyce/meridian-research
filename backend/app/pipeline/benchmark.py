@@ -140,14 +140,14 @@ def run_benchmark() -> dict[str, Any]:
 
     # Mock embedder: returns zero-vectors of correct shape
     mock_model: MagicMock = MagicMock()
-    mock_model.encode.side_effect = lambda texts, **kwargs: np.zeros(  # type: ignore[misc]
+    mock_model.encode.side_effect = lambda texts, **kwargs: np.zeros(
         (len(texts), 384), dtype="float32"
     )
 
     # Mock spaCy nlp: returns docs with no entities
     mock_nlp: MagicMock = MagicMock()
 
-    def _mock_nlp_call(text: str) -> MagicMock:  # type: ignore[misc]
+    def _mock_nlp_call(text: str) -> MagicMock:
         doc = MagicMock()
         doc.sents = []
         doc.ents = []

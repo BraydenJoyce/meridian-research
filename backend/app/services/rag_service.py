@@ -52,7 +52,7 @@ def get_context(question: str, qdrant_client: QdrantClient) -> list[RagContext]:
             [question], normalize_embeddings=True
         )[0].tolist()
 
-        results = qdrant_client.search(
+        results = qdrant_client.search(  # type: ignore[attr-defined]
             collection_name="research_sources",
             query_vector=query_vector,
             limit=5,
