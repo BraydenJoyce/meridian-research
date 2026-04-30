@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     # Search
     tavily_api_key: str = ""
 
+    # Modal CV inference
+    modal_base_url: str = "local"
+    modal_api_secret: str = ""
+
+    # News APIs
+    newsapi_key: str = ""
+    gnews_key: str = ""
+
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000"]
 

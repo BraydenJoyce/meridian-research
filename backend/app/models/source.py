@@ -46,6 +46,7 @@ class Source(MappedAsDataclass, Base):
         Numeric(5, 4), nullable=True, default=None
     )
     entities: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
+    source_type: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     qdrant_point_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, default=None)
     fetched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None

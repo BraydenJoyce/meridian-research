@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from app.core.dependencies import get_db
 from app.models.research_session import ResearchSession
 from app.schemas.research_session import CreateResearchResponse, ResearchSessionCreate
 from app.services import research_service
+from app.services.report_generator import generate_pdf
 from app.services.stream_service import event_stream
 
 router = APIRouter(prefix="/api/research", tags=["research"])
@@ -44,4 +45,24 @@ async def stream_research(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.get("/{session_id}/export")
+async def export_report(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    result = await db.execute(
+        select(ResearchSession).where(ResearchSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if session is None or session.report_markdown is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    pdf_bytes = generate_pdf(session.report_markdown)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=report.pdf"},
     )

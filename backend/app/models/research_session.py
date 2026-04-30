@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, MappedAsDataclass, mapped_column
 
@@ -32,6 +33,10 @@ class ResearchSession(MappedAsDataclass, Base):
     report_markdown: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     sub_tasks: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
+    critique_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
+    quality_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 3), nullable=True, default=None
+    )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
