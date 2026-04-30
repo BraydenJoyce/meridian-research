@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+.next/
+.vercel/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML model artifacts
+# Note: *.onnx is tracked via Git LFS (.gitattributes) — do NOT add *.onnx here
+ml/models/*.pt
+ml/models/*.pth
+ml/models/*.ckpt
+ml/models/*.weights
+ml/models/*.engine
+ml/runs/
+ml/train/runs/

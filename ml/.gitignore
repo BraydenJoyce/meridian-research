@@ -1,0 +1,23 @@
+# YOLOv8 training runs (large directories, not committed)
+runs/
+train/runs/
+
+# PyTorch checkpoint files — tracked via Git LFS or excluded
+*.pt
+*.pth
+*.ckpt
+
+# Ultralytics cache and dataset artifacts
+datasets/
+.cache/
+*.cache
+
+# ONNX runtime profiling output
+*.json.prof
+
+# Weights & Biases artifacts
+wandb/
+
+# Python bytecode
+__pycache__/
+*.pyc

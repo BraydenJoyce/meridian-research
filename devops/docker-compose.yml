@@ -56,6 +56,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/meridian
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6333
+      MODAL_BASE_URL: ${MODAL_BASE_URL:-http://localhost:8001}
+      MODAL_API_SECRET: ${MODAL_API_SECRET:-dev-secret}
     volumes:
       - ../backend/app:/app/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

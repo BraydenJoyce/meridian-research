@@ -35,6 +35,14 @@ jobs:
       - name: pytest
         run: pytest tests/ -v --tb=short --cov=app --cov-report=xml
 
+      - name: Run ML unit tests
+        run: |
+          if [ -d "tests/unit/ml" ]; then
+            python -m pytest tests/unit/ml/ -v --tb=short
+          else
+            echo "ML tests not yet available — skipping"
+          fi
+
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         if: always()
