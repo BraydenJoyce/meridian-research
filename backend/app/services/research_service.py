@@ -4,14 +4,17 @@ from datetime import UTC, datetime
 from typing import cast
 
 import structlog
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.research_session import ResearchSession
+from app.models.user_subscription import UserSubscription
 from app.schemas.research_session import CreateResearchResponse
 from app.services.redis_client import get_redis
 
 REDIS_QUEUE_KEY = "meridian:queue:sessions"
+FREE_TIER_LIMIT = 3
 
 logger = structlog.get_logger(__name__)
 
@@ -30,11 +33,32 @@ async def get_usage_this_month(user_id: uuid.UUID, db: AsyncSession) -> int:
     return int(count or 0)
 
 
+async def _enforce_tier(user_id: uuid.UUID, db: AsyncSession) -> None:
+    """Raise 429 if free-tier user has reached their monthly report limit."""
+    sub = await db.get(UserSubscription, user_id)
+    if sub is not None and sub.plan == "pro":
+        return
+
+    usage = await get_usage_this_month(user_id, db)
+    if usage >= FREE_TIER_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Free tier limit reached ({FREE_TIER_LIMIT}/month). "
+                "Upgrade to Pro for unlimited reports."
+            ),
+        )
+
+
 async def create_research_session(
     question: str,
     db: AsyncSession,
+    user_id: uuid.UUID | None = None,
 ) -> CreateResearchResponse:
-    session = ResearchSession(question=question)
+    if user_id is not None:
+        await _enforce_tier(user_id, db)
+
+    session = ResearchSession(question=question, user_id=user_id)
     db.add(session)
     await db.flush()  # assigns id without committing
 

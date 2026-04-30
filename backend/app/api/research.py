@@ -25,6 +25,7 @@ async def create_research(
     return await research_service.create_research_session(
         question=body.question,
         db=db,
+        user_id=current_user.user_id,
     )
 
 

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.api import health, research
+from app.api import billing, health, research
 from app.core.middleware import register_middleware
 from app.services import worker
 
@@ -32,3 +32,4 @@ register_middleware(app)
 
 app.include_router(health.router)
 app.include_router(research.router)
+app.include_router(billing.router)
