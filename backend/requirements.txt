@@ -26,6 +26,8 @@ fpdf2==2.8.3
 textstat==0.7.4
 python-jose[cryptography]==3.3.0
 stripe==11.4.0
+slowapi==0.1.9
+sentry-sdk[fastapi]==2.19.2
 
 # Testing
 pytest==8.3.4

@@ -20,7 +20,15 @@ logger = structlog.get_logger(__name__)
 
 
 async def get_usage_this_month(user_id: uuid.UUID, db: AsyncSession) -> int:
-    """Count research sessions created by user_id in the current calendar month."""
+    """Count research sessions created by a user in the current calendar month.
+
+    Args:
+        user_id: UUID of the user to check.
+        db: Async database session.
+
+    Returns:
+        Number of sessions created since the first of the current month (UTC).
+    """
     start_of_month = datetime.now(UTC).replace(
         day=1, hour=0, minute=0, second=0, microsecond=0
     )
@@ -55,6 +63,19 @@ async def create_research_session(
     db: AsyncSession,
     user_id: uuid.UUID | None = None,
 ) -> CreateResearchResponse:
+    """Create a research session, enforce tier limits, and enqueue for processing.
+
+    Args:
+        question: Research question (10-2000 characters).
+        db: Async database session.
+        user_id: Authenticated user UUID. If provided, tier enforcement runs.
+
+    Returns:
+        Response containing session_id, status, and SSE stream_url.
+
+    Raises:
+        HTTPException(429): Free-tier user has reached the monthly report limit.
+    """
     if user_id is not None:
         await _enforce_tier(user_id, db)
 

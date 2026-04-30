@@ -30,7 +30,22 @@ _MAX_SECTIONS = 10
 
 
 def score_report(markdown: str) -> ReportQuality:
-    """Compute quality metrics for a report markdown string."""
+    """Compute quality metrics for a markdown report string.
+
+    Metrics computed:
+        - word_count: total word tokens
+        - citation_count: number of markdown hyperlinks
+        - citation_density: citations per 100 words
+        - section_count: number of ## headings
+        - flesch_kincaid_grade: readability grade level (via textstat)
+        - composite_score: 0.4*citation_density_norm + 0.3*section_norm + 0.3*readability_norm
+
+    Args:
+        markdown: Raw markdown text of the report.
+
+    Returns:
+        ReportQuality with all metrics populated. Returns zero scores for empty input.
+    """
     if not markdown or not markdown.strip():
         return ReportQuality(
             word_count=0,

@@ -8,7 +8,17 @@ from fpdf import FPDF
 
 
 def generate_pdf(markdown: str) -> bytes:
-    """Convert a markdown string to PDF bytes."""
+    """Convert a markdown report string to PDF bytes.
+
+    Uses mistune to parse markdown to HTML, then renders to PDF via fpdf2.
+    Supports: ## and ### headings, bullet lists, and paragraph text.
+
+    Args:
+        markdown: Raw markdown report text.
+
+    Returns:
+        PDF file content as bytes (starts with b'%PDF').
+    """
     html = mistune.html(markdown)
     lines = _html_to_lines(html)
 

@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Auth
     supabase_jwt_secret: str = ""
 
+    # Monitoring
+    sentry_dsn: str = ""
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
