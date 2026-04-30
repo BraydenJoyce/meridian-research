@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.base import AgentEvent, AgentFatalError, EventEmitter, ResearchAgent
 from app.models.research_session import ResearchSession
 from app.models.source import Source
+from app.services.chart_formatter import format_charts_section
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +27,10 @@ SYSTEM_PROMPT = (
     "- Every factual claim must have an inline citation: [Source Title](url)\n"
     "- Write in formal, concise business language\n"
     "- Use bullet points for key findings within each section\n"
-    "- Minimum 3 citations across the report"
+    "- Minimum 3 citations across the report\n"
+    "- When chart data is provided in the '## Data from Charts' section, reference "
+    "specific data points from charts in your analysis and cite the chart's source_url "
+    "using the standard inline citation format [Source Title](url)."
 )
 
 
@@ -54,7 +58,10 @@ class WriterAgent(ResearchAgent):
             await self._fail("No sources available for report generation")
             raise AgentFatalError("No scored sources found for session")
 
-        markdown = await self._generate_report(sources, input_data.get("question", ""))
+        chart_results: list[dict[str, Any]] = input_data.get("chart_results", [])
+        markdown = await self._generate_report(
+            sources, input_data.get("question", ""), chart_results
+        )
 
         if not markdown or len(markdown.strip()) < 100:
             await self._fail("Generated report is too short or empty")
@@ -103,8 +110,33 @@ class WriterAgent(ResearchAgent):
             scored = all_sources
         return scored[:MAX_SOURCES_CONTEXT]
 
-    async def _generate_report(self, sources: list[Source], question: str) -> str:
+    async def _generate_report(
+        self,
+        sources: list[Source],
+        question: str,
+        chart_results: list[dict[str, Any]] | None = None,
+    ) -> str:
         sources_block = _format_sources_block(sources)
+        chart_block = format_charts_section(chart_results or [])
+
+        user_content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": sources_block,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
+        if chart_block:
+            user_content.append({"type": "text", "text": chart_block})
+        user_content.append(
+            {
+                "type": "text",
+                "text": (
+                    f"Research question: {question}\n\n"
+                    "Write the full markdown intelligence report now."
+                ),
+            }
+        )
 
         message = await self._client.messages.create(
             model=WRITER_MODEL,
@@ -116,25 +148,7 @@ class WriterAgent(ResearchAgent):
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": sources_block,
-                            "cache_control": {"type": "ephemeral"},
-                        },
-                        {
-                            "type": "text",
-                            "text": (
-                                f"Research question: {question}\n\n"
-                                "Write the full markdown intelligence report now."
-                            ),
-                        },
-                    ],
-                }
-            ],
+            messages=[{"role": "user", "content": user_content}],
         )
 
         for block in message.content:
