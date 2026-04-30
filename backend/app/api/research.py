@@ -5,6 +5,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.dependencies import get_db
 from app.models.research_session import ResearchSession
 from app.schemas.research_session import CreateResearchResponse, ResearchSessionCreate
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/api/research", tags=["research"])
 async def create_research(
     body: ResearchSessionCreate,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> CreateResearchResponse:
     return await research_service.create_research_session(
         question=body.question,
@@ -52,6 +54,7 @@ async def stream_research(
 async def export_report(
     session_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> Response:
     result = await db.execute(
         select(ResearchSession).where(ResearchSession.id == session_id)

@@ -6,11 +6,13 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import CurrentUser, get_current_user
 from app.core.dependencies import get_db
 from app.main import app
 from app.models.research_session import ResearchSession
 
 _FAKE_SESSION_ID = uuid.uuid4()
+_FAKE_USER = CurrentUser(user_id=uuid.uuid4(), email="test@example.com")
 
 
 def make_mock_db() -> AsyncSession:
@@ -35,6 +37,7 @@ def override_db_dependency() -> AsyncGenerator[None, None]:
         yield mock_db
 
     app.dependency_overrides[get_db] = fake_get_db
+    app.dependency_overrides[get_current_user] = lambda: _FAKE_USER
     yield
     app.dependency_overrides.clear()
 

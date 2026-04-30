@@ -33,8 +33,26 @@ class Settings(BaseSettings):
     newsapi_key: str = ""
     gnews_key: str = ""
 
+    # Auth
+    supabase_jwt_secret: str = ""
+
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_pro_price_id: str = ""
+
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000"]
+
+
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
 
 
 settings = Settings()

@@ -30,8 +30,11 @@ def test_generate_pdf_with_markdown_links() -> None:
 
 @pytest.mark.asyncio
 async def test_export_endpoint_returns_404_for_missing_session() -> None:
+    import uuid as _uuid
+
     from httpx import ASGITransport, AsyncClient
 
+    from app.core.auth import CurrentUser, get_current_user
     from app.core.dependencies import get_db
     from app.main import app
 
@@ -40,10 +43,13 @@ async def test_export_endpoint_returns_404_for_missing_session() -> None:
     db_mock = AsyncMock()
     db_mock.execute = AsyncMock(return_value=execute_result)
 
+    fake_user = CurrentUser(user_id=_uuid.uuid4(), email="t@test.com")
+
     async def override_get_db() -> Any:
         yield db_mock
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = lambda: fake_user
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -57,8 +63,11 @@ async def test_export_endpoint_returns_404_for_missing_session() -> None:
 
 @pytest.mark.asyncio
 async def test_export_endpoint_returns_pdf_content_type() -> None:
+    import uuid as _uuid
+
     from httpx import ASGITransport, AsyncClient
 
+    from app.core.auth import CurrentUser, get_current_user
     from app.core.dependencies import get_db
     from app.main import app
 
@@ -73,10 +82,13 @@ async def test_export_endpoint_returns_pdf_content_type() -> None:
     db_mock = AsyncMock()
     db_mock.execute = AsyncMock(return_value=execute_result)
 
+    fake_user = CurrentUser(user_id=_uuid.uuid4(), email="t@test.com")
+
     async def override_get_db() -> Any:
         yield db_mock
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = lambda: fake_user
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
