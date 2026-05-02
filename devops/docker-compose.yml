@@ -37,11 +37,6 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:6333/readyz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   backend:
     build:
@@ -67,12 +62,12 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
 
   frontend:
     build:
       context: ..
-      dockerfile: devops/Dockerfile.frontend
+      dockerfile: devops/Dockerfile.frontend.dev
     restart: unless-stopped
     ports:
       - "3000:3000"
