@@ -83,11 +83,20 @@ async def create_research_session(
     db.add(session)
     await db.flush()  # assigns id without committing
 
-    redis = await get_redis()
-    await cast(Awaitable[int], redis.lpush(REDIS_QUEUE_KEY, str(session.id)))
-
     await db.commit()
     await db.refresh(session)
+
+    try:
+        redis = await get_redis()
+        await cast(Awaitable[int], redis.lpush(REDIS_QUEUE_KEY, str(session.id)))
+    except Exception as exc:
+        session.status = "failed"
+        session.error_message = "Failed to enqueue research session"
+        await db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="Research queue is unavailable. Please try again.",
+        ) from exc
 
     logger.info("research_session.created", session_id=str(session.id))
 

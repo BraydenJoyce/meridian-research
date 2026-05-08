@@ -7,13 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import AgentEvent, AgentFatalError, EventEmitter, ResearchAgent
+from app.core.config import get_settings
 from app.models.research_session import ResearchSession
 from app.models.source import Source
 from app.services.chart_formatter import format_charts_section
 
 logger = structlog.get_logger(__name__)
 
-WRITER_MODEL = "claude-3-5-sonnet-20241022"
 MIN_QUALITY_SCORE = 0.4
 MAX_SOURCES_CONTEXT = 30
 
@@ -139,7 +139,7 @@ class WriterAgent(ResearchAgent):
         )
 
         message = await self._client.messages.create(
-            model=WRITER_MODEL,
+            model=get_settings().anthropic_writer_model,
             max_tokens=4096,
             system=[
                 {

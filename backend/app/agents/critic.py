@@ -11,11 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import AgentEvent, EventEmitter, ResearchAgent
+from app.core.config import get_settings
 from app.models.research_session import ResearchSession
 
 logger = structlog.get_logger(__name__)
-
-CRITIC_MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = (
     "You are a fact-checking assistant reviewing a market intelligence report. "
@@ -82,6 +81,7 @@ class CriticAgent(ResearchAgent):
                     "agent": "critic",
                     "quality_score": quality_score,
                     "flagged_count": flagged_count,
+                    "flagged_claims": critique.get("flagged_claims", []),
                 },
             )
         )
@@ -116,7 +116,7 @@ class CriticAgent(ResearchAgent):
 
         try:
             message = await self._client.messages.create(
-                model=CRITIC_MODEL,
+                model=get_settings().anthropic_critic_model,
                 max_tokens=1024,
                 system=[
                     {

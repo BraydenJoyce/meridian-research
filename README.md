@@ -143,7 +143,7 @@ npm run dev
 
 ```bash
 # From repo root
-docker-compose up --build
+docker compose -f devops/docker-compose.yml up --build
 ```
 
 This starts: FastAPI backend, Next.js frontend, PostgreSQL (local), Redis, Qdrant.

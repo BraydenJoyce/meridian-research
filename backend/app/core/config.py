@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # Application
     app_version: str = "0.1.0"
     debug: bool = False
+    app_base_url: str = "http://localhost:3000"
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/meridian"
@@ -21,6 +22,12 @@ class Settings(BaseSettings):
     # AI providers
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    anthropic_planner_model: str = "claude-sonnet-4-20250514"
+    anthropic_writer_model: str = "claude-sonnet-4-20250514"
+    anthropic_critic_model: str = "claude-sonnet-4-20250514"
+    anthropic_hypothesis_model: str = "claude-sonnet-4-20250514"
+    anthropic_metrics_model: str = "claude-sonnet-4-20250514"
+    anthropic_strategist_model: str = "claude-sonnet-4-20250514"
 
     # Search
     tavily_api_key: str = ""

@@ -9,13 +9,6 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
   },
-  // Inject test env so Supabase client points to a known URL
-  // that we can intercept in tests
-  env: {
-    NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321",
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
-    NEXT_PUBLIC_API_URL: "http://localhost:8000",
-  },
   projects: [
     {
       name: "chromium",
@@ -27,5 +20,10 @@ export default defineConfig({
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    env: {
+      NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
+      NEXT_PUBLIC_API_URL: "http://localhost:8000",
+    },
   },
 });

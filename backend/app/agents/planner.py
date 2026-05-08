@@ -8,10 +8,10 @@ import structlog
 from qdrant_client import QdrantClient
 
 from app.agents.base import AgentEvent, AgentFatalError, EventEmitter, ResearchAgent
+from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
-PLANNER_MODEL = "claude-3-5-haiku-20241022"
 MAX_RETRIES = 2
 
 SYSTEM_PROMPT = """You are a research planning assistant. Given a business research question, \
@@ -41,10 +41,12 @@ class PlannerAgent(ResearchAgent):
         session_id: uuid.UUID,
         emitter: EventEmitter,
         qdrant_client: QdrantClient | None = None,
+        max_sub_tasks: int = 3,
     ) -> None:
         super().__init__(session_id, emitter)
         self._client = anthropic.AsyncAnthropic()
         self._qdrant_client = qdrant_client
+        self._max_sub_tasks = max_sub_tasks
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         question: str = input_data["question"]
@@ -62,7 +64,10 @@ class PlannerAgent(ResearchAgent):
 
             rag_sources = get_context(question, self._qdrant_client)
 
-        effective_system = SYSTEM_PROMPT
+        effective_system = SYSTEM_PROMPT.replace(
+            "3 to 10 sub-tasks",
+            f"{self._max_sub_tasks} to 10 sub-tasks — aim for {self._max_sub_tasks}",
+        )
         if rag_sources:
             ctx_lines = "\n".join(
                 f"- [{s.url}]: {s.content_snippet}" for s in rag_sources[:5]
@@ -71,7 +76,7 @@ class PlannerAgent(ResearchAgent):
                 "\n\nRelevant prior research context"
                 " (use to inform your sub-task selection):\n"
             )
-            effective_system = SYSTEM_PROMPT + rag_header + ctx_lines
+            effective_system = effective_system + rag_header + ctx_lines
 
         sub_tasks = await self._decompose_with_retry(question, effective_system)
 
@@ -119,7 +124,7 @@ class PlannerAgent(ResearchAgent):
         self, question: str, system_prompt: str = SYSTEM_PROMPT
     ) -> list[str]:
         response = await self._client.messages.create(
-            model=PLANNER_MODEL,
+            model=get_settings().anthropic_planner_model,
             max_tokens=1024,
             system=[
                 {

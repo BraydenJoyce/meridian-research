@@ -3,10 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
 export default function LoginPage() {
@@ -20,19 +17,11 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-
     try {
       const supabase = createClient();
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (authError) {
-        setError(authError.message);
-      } else {
-        router.push("/dashboard");
-      }
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) setError(authError.message);
+      else router.push("/dashboard");
     } catch {
       setError("An unexpected error occurred. Please try again.");
     } finally {
@@ -41,16 +30,20 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Sign in to Meridian</CardTitle>
-        </CardHeader>
-        <CardContent>
+    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-sm">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8">
+          <div className="mb-6">
+            <h1 className="text-xl font-bold text-slate-900">Welcome back</h1>
+            <p className="text-sm text-slate-500 mt-1">Sign in to your Meridian account</p>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
+            <div className="space-y-1.5">
+              <label htmlFor="email" className="text-sm font-medium text-slate-700">
+                Email
+              </label>
+              <input
                 id="email"
                 type="email"
                 placeholder="you@example.com"
@@ -58,11 +51,14 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 aria-label="Email"
+                className="w-full border border-slate-200 rounded-lg bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
+            <div className="space-y-1.5">
+              <label htmlFor="password" className="text-sm font-medium text-slate-700">
+                Password
+              </label>
+              <input
                 id="password"
                 type="password"
                 placeholder="••••••••"
@@ -70,35 +66,49 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 aria-label="Password"
+                className="w-full border border-slate-200 rounded-lg bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors"
               />
             </div>
 
             {error && (
-              <p role="alert" className="text-sm text-red-600">
+              <div
+                role="alert"
+                className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700"
+              >
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 {error}
-              </p>
+              </div>
             )}
 
-            <Button type="submit" className="w-full" disabled={loading}>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
               {loading ? "Signing in…" : "Sign in"}
-            </Button>
-
-            <div className="text-center text-sm text-gray-600 space-y-1">
-              <p>
-                <Link href="/auth/reset-password" className="text-blue-600 hover:underline">
-                  Forgot password?
-                </Link>
-              </p>
-              <p>
-                Don&apos;t have an account?{" "}
-                <Link href="/auth/signup" className="text-blue-600 hover:underline">
-                  Sign up
-                </Link>
-              </p>
-            </div>
+            </button>
           </form>
-        </CardContent>
-      </Card>
+
+          <div className="mt-5 pt-5 border-t border-slate-100 flex flex-col items-center gap-2 text-sm text-slate-500">
+            <Link
+              href="/auth/reset-password"
+              className="text-indigo-600 hover:text-indigo-700 hover:underline"
+            >
+              Forgot password?
+            </Link>
+            <p>
+              Don&apos;t have an account?{" "}
+              <Link
+                href="/auth/signup"
+                className="text-indigo-600 hover:text-indigo-700 font-medium hover:underline"
+              >
+                Sign up
+              </Link>
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

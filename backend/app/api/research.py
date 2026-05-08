@@ -1,17 +1,27 @@
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.core.dependencies import get_db
 from app.core.rate_limit import limiter
 from app.models.research_session import ResearchSession
-from app.schemas.research_session import CreateResearchResponse, ResearchSessionCreate
+from app.schemas.research_session import (
+    CreateResearchResponse,
+    PublicSessionRead,
+    ResearchSessionCreate,
+    ResearchSessionRead,
+    ShareSessionResponse,
+)
+from app.models.user_subscription import UserSubscription
 from app.services import research_service
-from app.services.report_generator import generate_pdf
+from app.services.report_generator import generate_pdf, to_docx
 from app.services.stream_service import event_stream
 
 router = APIRouter(prefix="/api/research", tags=["research"])
@@ -43,6 +53,106 @@ async def create_research(
         db=db,
         user_id=current_user.user_id,
     )
+
+
+@router.get("/sessions", response_model=list[ResearchSessionRead])
+@limiter.limit("30/minute")
+async def list_research_sessions(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[ResearchSession]:
+    """Return the authenticated user's research session history."""
+    result = await db.execute(
+        select(ResearchSession)
+        .where(ResearchSession.user_id == current_user.user_id)
+        .order_by(ResearchSession.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/public/{slug}", response_model=PublicSessionRead)
+@limiter.limit("60/minute")
+async def get_public_session(
+    request: Request,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+) -> ResearchSession:
+    """Return a publicly shared research session by its slug (no auth required)."""
+    result = await db.execute(
+        select(ResearchSession).where(
+            ResearchSession.public_slug == slug,
+            ResearchSession.is_public == True,  # noqa: E712
+            ResearchSession.status == "completed",
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Public report not found")
+    return session
+
+
+@router.post("/{session_id}/share", response_model=ShareSessionResponse)
+@limiter.limit("10/minute")
+async def share_research_session(
+    request: Request,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ShareSessionResponse:
+    """Make a completed research session publicly accessible via a short slug."""
+    result = await db.execute(
+        select(ResearchSession).where(
+            ResearchSession.id == session_id,
+            ResearchSession.user_id == current_user.user_id,
+            ResearchSession.status == "completed",
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Completed session not found")
+
+    if session.is_public and session.public_slug:
+        public_url = f"{get_settings().app_base_url}/r/{session.public_slug}"
+        return ShareSessionResponse(public_url=public_url, public_slug=session.public_slug)
+
+    for _ in range(3):
+        slug = secrets.token_urlsafe(9)  # produces 12 chars
+        session.public_slug = slug
+        session.is_public = True
+        try:
+            await db.commit()
+            await db.refresh(session)
+            break
+        except IntegrityError:
+            await db.rollback()
+            continue
+    else:
+        raise HTTPException(status_code=500, detail="Could not generate a unique share link")
+
+    public_url = f"{get_settings().app_base_url}/r/{session.public_slug}"
+    return ShareSessionResponse(public_url=public_url, public_slug=session.public_slug)
+
+
+@router.get("/{session_id}", response_model=ResearchSessionRead)
+@limiter.limit("30/minute")
+async def get_research_session(
+    request: Request,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ResearchSession:
+    """Return one authenticated user's research session."""
+    result = await db.execute(
+        select(ResearchSession).where(
+            ResearchSession.id == session_id,
+            ResearchSession.user_id == current_user.user_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
 
 
 @router.get("/{session_id}/stream")
@@ -103,7 +213,10 @@ async def export_report(
         HTTPException(404): Session not found or report not yet generated.
     """
     result = await db.execute(
-        select(ResearchSession).where(ResearchSession.id == session_id)
+        select(ResearchSession).where(
+            ResearchSession.id == session_id,
+            ResearchSession.user_id == current_user.user_id,
+        )
     )
     session = result.scalar_one_or_none()
     if session is None or session.report_markdown is None:
@@ -114,4 +227,54 @@ async def export_report(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=report.pdf"},
+    )
+
+
+@router.get("/{session_id}/export/docx")
+@limiter.limit("10/minute")
+async def export_report_docx(
+    request: Request,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    """Export a completed research report as a DOCX file (Pro plan only).
+
+    Args:
+        session_id: UUID of the completed research session.
+        db: Async database session.
+        current_user: Authenticated user from JWT.
+
+    Returns:
+        DOCX file as application/vnd.openxmlformats-officedocument
+        .wordprocessingml.document response with Content-Disposition header.
+
+    Raises:
+        HTTPException(403): User does not have an active Pro subscription.
+        HTTPException(404): Session not found or report not yet generated.
+    """
+    sub = await db.get(UserSubscription, current_user.user_id)
+    if sub is None or sub.plan != "pro":
+        raise HTTPException(
+            status_code=403,
+            detail="DOCX export requires a Pro plan. Upgrade at /pricing.",
+        )
+
+    result = await db.execute(
+        select(ResearchSession).where(
+            ResearchSession.id == session_id,
+            ResearchSession.user_id == current_user.user_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None or session.report_markdown is None:
+        raise HTTPException(status_code=404, detail="Report not found or not yet complete")
+
+    docx_bytes = to_docx(session.report_markdown, title=session.question)
+    safe_title = session.question[:50].replace(" ", "_").replace("/", "-")
+    filename = f"{safe_title}.docx"
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

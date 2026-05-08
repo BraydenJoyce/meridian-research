@@ -13,14 +13,21 @@ class AgentEvent(MappedAsDataclass, Base):
     __tablename__ = "agent_events"
     __table_args__ = (
         CheckConstraint(
-            "agent_type IN ('planner', 'web_search', 'etl', 'writer', 'system')",
+            "agent_type IN ("
+            "'planner', 'web_search', 'cv_document', 'news', 'structured_data', "
+            "'etl', 'writer', 'critic', 'orchestrator', 'system', "
+            "'hypothesis', 'metrics', 'chart_gallery', 'strategist')",
             name="ck_agent_events_agent_type",
         ),
         CheckConstraint(
             "event_type IN ("
             "'agent_started', 'agent_completed', 'agent_failed', "
             "'sub_task_started', 'sub_task_completed', 'source_fetched', "
-            "'etl_progress', 'report_chunk', 'done', 'error')",
+            "'etl_progress', 'report_chunk', 'report_complete', "
+            "'report_critique', 'news_fetched', 'edgar_fetched', "
+            "'cv_document_started', 'cv_document_classified', "
+            "'cv_chart_extracted', 'orchestration_summary', 'done', 'error', "
+            "'hypothesis_ready', 'metrics_ready', 'chart_gallery_ready', 'strategy_ready')",
             name="ck_agent_events_event_type",
         ),
         Index("idx_agent_events_session_seq", "session_id", "sequence_number"),

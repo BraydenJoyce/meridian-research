@@ -2,10 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AlertCircle, ArrowLeft, CheckCircle, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
 export default function ResetPasswordPage() {
@@ -38,24 +35,39 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Reset your password</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {success ? (
-            <p role="status" className="text-sm text-green-700">
-              Password reset link sent! Check your email and follow the link to set a new password.
-            </p>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <p className="text-sm text-gray-600">
-                Enter your email address and we&apos;ll send you a password reset link.
+    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-sm">
+        {success ? (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-8 flex flex-col items-center text-center gap-3">
+            <CheckCircle className="w-8 h-8 text-emerald-600" />
+            <div>
+              <p className="text-sm font-semibold text-emerald-800">Check your email</p>
+              <p role="status" className="text-sm text-emerald-700 mt-1">
+                We sent a reset link to <strong>{email}</strong>. Follow the link to set a new
+                password.
               </p>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
+            </div>
+            <Link
+              href="/auth/login"
+              className="mt-1 text-sm text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back to sign in
+            </Link>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8">
+            <div className="mb-6">
+              <h1 className="text-xl font-bold text-slate-900">Reset your password</h1>
+              <p className="text-sm text-slate-500 mt-1">We&apos;ll send you a reset link</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="email" className="text-sm font-medium text-slate-700">
+                  Email
+                </label>
+                <input
                   id="email"
                   type="email"
                   placeholder="you@example.com"
@@ -63,28 +75,42 @@ export default function ResetPasswordPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   aria-label="Email"
+                  className="w-full border border-slate-200 rounded-lg bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors"
                 />
               </div>
 
               {error && (
-                <p role="alert" className="text-sm text-red-600">
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700"
+                >
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   {error}
-                </p>
+                </div>
               )}
 
-              <Button type="submit" className="w-full" disabled={loading}>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                 {loading ? "Sending…" : "Send reset link"}
-              </Button>
-
-              <p className="text-center text-sm text-gray-600">
-                <Link href="/auth/login" className="text-blue-600 hover:underline">
-                  Back to sign in
-                </Link>
-              </p>
+              </button>
             </form>
-          )}
-        </CardContent>
-      </Card>
+
+            <div className="mt-5 pt-5 border-t border-slate-100 text-center">
+              <Link
+                href="/auth/login"
+                className="text-sm text-indigo-600 hover:text-indigo-700 hover:underline flex items-center justify-center gap-1"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                Back to sign in
+              </Link>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

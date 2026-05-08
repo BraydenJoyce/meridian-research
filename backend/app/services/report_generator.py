@@ -1,6 +1,7 @@
 """Converts research report markdown to PDF bytes (ADR-007)."""
 from __future__ import annotations
 
+import io
 import re
 
 import mistune
@@ -95,3 +96,38 @@ def _html_to_lines(html: str) -> list[tuple[str, str]]:
 
 def _strip_tags(text: str) -> str:
     return _TAG_RE.sub("", text)
+
+
+def to_docx(markdown: str, title: str = "Intelligence Report") -> bytes:
+    """Convert a markdown report string to DOCX bytes.
+
+    Uses mistune to parse markdown to HTML, then renders to a Word document
+    via python-docx.  Supports: ## and ### headings, bullet lists, and
+    paragraph text.
+
+    Args:
+        markdown: Raw markdown report text.
+        title:    Document title added as a top-level heading.
+
+    Returns:
+        DOCX file content as bytes.
+    """
+    from docx import Document  # noqa: PLC0415  (lazy import – optional dep)
+
+    doc = Document()
+    doc.add_heading(title, level=0)
+
+    html = mistune.html(markdown)
+    for kind, text in _html_to_lines(html):
+        if kind == "h2":
+            doc.add_heading(text, level=1)
+        elif kind == "h3":
+            doc.add_heading(text, level=2)
+        elif kind == "li":
+            doc.add_paragraph(text, style="List Bullet")
+        else:
+            doc.add_paragraph(text)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()

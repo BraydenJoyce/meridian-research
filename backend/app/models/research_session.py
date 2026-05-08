@@ -3,7 +3,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, Numeric, String, Text, func
+import sqlalchemy as sa
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, MappedAsDataclass, mapped_column
 
@@ -34,6 +35,10 @@ class ResearchSession(MappedAsDataclass, Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     sub_tasks: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
     critique_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
+    hypothesis_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
+    metrics_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
+    strategy_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
+    chart_gallery_json: Mapped[Any | None] = mapped_column(JSONB, nullable=True, default=None)
     quality_score: Mapped[Decimal | None] = mapped_column(
         Numeric(4, 3), nullable=True, default=None
     )
@@ -54,4 +59,10 @@ class ResearchSession(MappedAsDataclass, Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
+    )
+    public_slug: Mapped[str | None] = mapped_column(
+        String(12), nullable=True, unique=True, default=None
+    )
+    is_public: Mapped[bool] = mapped_column(
+        Boolean(), nullable=False, server_default=sa.false(), default=False
     )

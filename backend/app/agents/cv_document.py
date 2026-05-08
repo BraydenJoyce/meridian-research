@@ -1,18 +1,22 @@
-"""CV Document Agent: classifies images and extracts chart data via Modal (ADR-005)."""
+"""CV Document Agent: classify images and extract chart data via Claude Vision."""
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import re
 import uuid
 from decimal import Decimal
 from typing import Any
 
+import anthropic
 import httpx
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import AgentError, AgentEvent, EventEmitter, ResearchAgent
+from app.core.config import get_settings
 from app.models.chart_extraction import ChartExtraction
 from app.models.source import Source
 from app.schemas.cv import ChartResult
@@ -24,16 +28,54 @@ _IMAGE_URL_PATTERN = re.compile(
     r'|!\[[^\]]*\]\(([^)]+\.(png|jpg|jpeg|gif|webp))\))',
     re.IGNORECASE,
 )
-_MAX_IMAGES_PER_SESSION = 50
+_MAX_IMAGES_PER_SESSION = 25
 _STARTUP_WAIT_SECONDS = 10
-_CONFIDENCE_THRESHOLD = 0.70
-_EXTRACTABLE_CLASSES = frozenset(
+_CONCURRENCY = 3
+_VALID_CHART_TYPES = frozenset(
     {"bar_chart", "line_chart", "pie_chart", "scatter_plot", "table"}
 )
 
+_SYSTEM_PROMPT = (
+    "You are a data extraction assistant specializing in charts and data visualizations.\n\n"
+    "Examine the image and determine whether it is a meaningful data visualization "
+    "(bar chart, line chart, pie chart, scatter plot, or data table with numeric values).\n\n"
+    "If it IS a chart or data table, respond with this JSON:\n"
+    "{\n"
+    '  "is_chart": true,\n'
+    '  "chart_type": "<bar_chart|line_chart|pie_chart|scatter_plot|table>",\n'
+    '  "title": "<chart title or null>",\n'
+    '  "x_axis": "<x-axis label or null>",\n'
+    '  "y_axis": "<y-axis label or null>",\n'
+    '  "series": [\n'
+    '    {"name": "<series name>", "data_points": [{"label": "<x value>", "value": <number or "unreadable">}]}\n'
+    "  ],\n"
+    '  "key_insight": "<1-2 sentence summary of the most important finding>"\n'
+    "}\n\n"
+    "If it is NOT a chart (logo, photo, icon, banner, decorative image, "
+    "or infographic without extractable numeric data), respond with:\n"
+    '{"is_chart": false}\n\n'
+    "Rules:\n"
+    "- pie chart: x_axis and y_axis must be null; each slice = one DataPoint "
+    "(label=slice name, value=percentage as float)\n"
+    "- table: x_axis and y_axis must be null; each column = one series\n"
+    "- key_insight: always required when is_chart=true; never empty\n"
+    "- Output ONLY the JSON object, no markdown fences, no explanation"
+)
+
+
+def _detect_media_type(image_bytes: bytes) -> str:
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return "image/png"
+
 
 def _extract_image_urls(raw_content: str) -> list[str]:
-    """Extract image URLs from raw HTML/Markdown content."""
     seen: set[str] = set()
     urls: list[str] = []
     for match in _IMAGE_URL_PATTERN.finditer(raw_content):
@@ -46,14 +88,11 @@ def _extract_image_urls(raw_content: str) -> list[str]:
 
 class CvDocumentAgent(ResearchAgent):
     """
-    Extracts structured chart data from document images found in research sources.
+    Extracts structured chart data from images found in research sources.
 
-    Runs concurrently with WebSearchAgent. After a brief startup wait it queries
-    the sources table, extracts image URLs, classifies each via Modal /classify,
-    then extracts chart data via Modal /extract-chart for qualifying images.
-
-    CV failure is always AgentError (never AgentFatalError). Sessions with zero
-    charts complete normally as text-only reports.
+    Uses Claude Vision to classify and extract in a single call — no external
+    ML server required. Runs concurrently with other enrichment agents.
+    Non-fatal: sessions with zero charts complete normally as text-only reports.
     """
 
     def __init__(
@@ -61,15 +100,13 @@ class CvDocumentAgent(ResearchAgent):
         session_id: uuid.UUID,
         emitter: EventEmitter,
         db: AsyncSession,
-        modal_base_url: str,
+        # Legacy params kept for call-site compatibility; no longer used
+        modal_base_url: str = "local",
         modal_api_secret: str = "",
     ) -> None:
         super().__init__(session_id, emitter)
         self._db = db
-        self._modal_base_url = modal_base_url.rstrip("/")
-        self._headers: dict[str, str] = {}
-        if modal_api_secret:
-            self._headers["Authorization"] = f"Bearer {modal_api_secret}"
+        self._client = anthropic.AsyncAnthropic()
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         await self.emitter.emit(
@@ -84,11 +121,7 @@ class CvDocumentAgent(ResearchAgent):
         try:
             chart_results = await self._process_session()
         except Exception as exc:
-            logger.warning(
-                "cv_agent_error",
-                session_id=str(self.session_id),
-                error=str(exc),
-            )
+            logger.warning("cv_agent_error", session_id=str(self.session_id), error=str(exc))
             await self.emitter.emit(
                 AgentEvent(
                     session_id=self.session_id,
@@ -104,10 +137,7 @@ class CvDocumentAgent(ResearchAgent):
                 session_id=self.session_id,
                 agent_type="cv_document",
                 event_type="agent_completed",
-                payload={
-                    "agent": "cv_document",
-                    "charts_extracted": len(chart_results),
-                },
+                payload={"agent": "cv_document", "charts_extracted": len(chart_results)},
             )
         )
         return {
@@ -123,23 +153,21 @@ class CvDocumentAgent(ResearchAgent):
             logger.info("cv_agent.no_sources", session_id=str(self.session_id))
             return []
 
-        image_urls = _collect_image_urls(sources)
-        if not image_urls:
+        image_pairs = _collect_image_urls(sources)
+        if not image_pairs:
             logger.info("cv_agent.no_images", session_id=str(self.session_id))
             return []
 
-        semaphore = asyncio.Semaphore(3)
+        semaphore = asyncio.Semaphore(_CONCURRENCY)
         tasks = [
             self._process_image(image_url, source_url, semaphore)
-            for image_url, source_url in image_urls
+            for image_url, source_url in image_pairs
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         chart_results: list[ChartResult] = []
         for r in results:
-            if isinstance(r, AgentError):
-                raise r  # propagate auth / fatal errors
-            elif isinstance(r, ChartResult):
+            if isinstance(r, ChartResult):
                 chart_results.append(r)
             elif isinstance(r, Exception):
                 logger.debug("cv_agent.image_failed", error=str(r))
@@ -171,115 +199,84 @@ class CvDocumentAgent(ResearchAgent):
                 )
             )
 
-            if self._modal_base_url == "local":
+            image_bytes = await _fetch_image(image_url)
+            if image_bytes is None:
                 return None
 
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(30.0), headers=self._headers
-            ) as client:
-                classify_resp = await self._classify(client, image_url, source_url)
-                if classify_resp is None:
-                    return None
-
-                doc_class, confidence = classify_resp
-                await self.emitter.emit(
-                    AgentEvent(
-                        session_id=self.session_id,
-                        agent_type="cv_document",
-                        event_type="cv_document_classified",
-                        payload={
-                            "source_url": source_url,
-                            "image_url": image_url,
-                            "doc_class": doc_class,
-                            "confidence": confidence,
-                        },
-                    )
-                )
-
-                if doc_class not in _EXTRACTABLE_CLASSES or confidence < _CONFIDENCE_THRESHOLD:
-                    return None
-
-                chart_result = await self._extract_chart(
-                    client, image_url, source_url, doc_class
-                )
-                if chart_result is None:
-                    return None
-
-                await self._store_extraction(chart_result, confidence)
-                await self.emitter.emit(
-                    AgentEvent(
-                        session_id=self.session_id,
-                        agent_type="cv_document",
-                        event_type="cv_chart_extracted",
-                        payload={
-                            "source_url": source_url,
-                            "image_url": image_url,
-                            "chart_type": chart_result.chart_type,
-                        },
-                    )
-                )
-                return chart_result
-
-    async def _classify(
-        self,
-        client: httpx.AsyncClient,
-        image_url: str,
-        source_url: str,
-    ) -> tuple[str, float] | None:
-        try:
-            resp = await client.post(
-                f"{self._modal_base_url}/classify",
-                json={"image_url": image_url, "session_id": str(self.session_id)},
+            chart_result = await self._classify_and_extract(
+                image_bytes, image_url, source_url
             )
-            if resp.status_code == 401:
-                raise AgentError("Modal authentication failed (401)")
-            if resp.status_code >= 500:
-                logger.warning(
-                    "cv_classify_server_error", image_url=image_url, status=resp.status_code
-                )
+            if chart_result is None:
                 return None
-            if resp.status_code >= 400:
-                logger.debug("cv_classify_skip", image_url=image_url, status=resp.status_code)
-                return None
-            data = resp.json()
-            return data["doc_class"], float(data["confidence"])
-        except AgentError:
-            raise
-        except Exception as exc:
-            logger.debug("cv_classify_error", image_url=image_url, error=str(exc))
-            return None
 
-    async def _extract_chart(
+            await self._store_extraction(chart_result)
+            await self.emitter.emit(
+                AgentEvent(
+                    session_id=self.session_id,
+                    agent_type="cv_document",
+                    event_type="cv_chart_extracted",
+                    payload={
+                        "source_url": source_url,
+                        "image_url": image_url,
+                        "chart_type": chart_result.chart_type,
+                    },
+                )
+            )
+            return chart_result
+
+    async def _classify_and_extract(
         self,
-        client: httpx.AsyncClient,
+        image_bytes: bytes,
         image_url: str,
         source_url: str,
-        doc_class: str,
     ) -> ChartResult | None:
-        try:
-            resp = await client.post(
-                f"{self._modal_base_url}/extract-chart",
-                json={
-                    "image_url": image_url,
-                    "session_id": str(self.session_id),
-                    "source_url": source_url,
-                    "doc_class": doc_class,
-                },
-            )
-            if resp.status_code >= 400:
-                logger.debug("cv_extract_error", image_url=image_url, status=resp.status_code)
-                return None
-            payload = resp.json()
-            if payload is None:
-                return None
-            return ChartResult.model_validate(payload)
-        except Exception as exc:
-            logger.debug("cv_extract_exception", image_url=image_url, error=str(exc))
-            return None
+        media_type = _detect_media_type(image_bytes)
+        image_b64 = base64.standard_b64encode(image_bytes).decode()
 
-    async def _store_extraction(
-        self, chart_result: ChartResult, confidence: float
-    ) -> None:
+        for attempt in range(2):
+            suffix = (
+                "" if attempt == 0
+                else "\n\nYour previous response was not valid JSON. Return ONLY the JSON object."
+            )
+            try:
+                response = await self._client.messages.create(
+                    model=get_settings().anthropic_writer_model,
+                    max_tokens=2048,
+                    system=[{"type": "text", "text": _SYSTEM_PROMPT,
+                              "cache_control": {"type": "ephemeral"}}],
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": image_b64,
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Examine this image. Is it a data chart or table? "
+                                    "Follow the system prompt instructions." + suffix
+                                ),
+                            },
+                        ],
+                    }],
+                )
+            except Exception as exc:
+                logger.debug("cv_vision_api_error", image_url=image_url, error=str(exc))
+                return None
+
+            raw = response.content[0].text if response.content else ""
+            result = _parse_vision_response(raw, image_url, source_url)
+            if result is not None:
+                return result
+
+        return None
+
+    async def _store_extraction(self, chart_result: ChartResult) -> None:
         extraction = ChartExtraction(
             session_id=self.session_id,
             image_url=chart_result.image_url,
@@ -290,19 +287,55 @@ class CvDocumentAgent(ResearchAgent):
             title=chart_result.title,
             x_axis=chart_result.x_axis,
             y_axis=chart_result.y_axis,
-            doc_class_confidence=Decimal(str(round(confidence, 4))),
+            doc_class_confidence=Decimal("1.0"),
         )
         self._db.add(extraction)
         await self._db.flush()
 
 
-def _collect_image_urls(sources: list[Source]) -> list[tuple[str, str]]:
-    """
-    Extract image URLs from source raw_content fields.
+def _parse_vision_response(
+    raw: str, image_url: str, source_url: str
+) -> ChartResult | None:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]
+        raw = raw.rsplit("```", 1)[0].strip()
+    try:
+        data: dict[str, Any] = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
 
-    Returns:
-        List of (image_url, source_url) pairs, capped at _MAX_IMAGES_PER_SESSION.
-    """
+    if not data.get("is_chart"):
+        return None
+
+    chart_type = data.get("chart_type", "")
+    if chart_type not in _VALID_CHART_TYPES:
+        return None
+
+    data["image_url"] = image_url
+    data["source_url"] = source_url
+    try:
+        return ChartResult.model_validate(data)
+    except Exception:
+        return None
+
+
+async def _fetch_image(image_url: str) -> bytes | None:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            resp = await client.get(image_url, follow_redirects=True)
+            resp.raise_for_status()
+            if len(resp.content) > 5 * 1024 * 1024:
+                return None
+            if len(resp.content) < 1024:
+                return None
+            return resp.content
+    except Exception as exc:
+        logger.debug("cv_image_fetch_failed", image_url=image_url, error=str(exc))
+        return None
+
+
+def _collect_image_urls(sources: list[Source]) -> list[tuple[str, str]]:
     seen: set[str] = set()
     results: list[tuple[str, str]] = []
     for source in sources:
@@ -313,9 +346,6 @@ def _collect_image_urls(sources: list[Source]) -> list[tuple[str, str]]:
                 seen.add(img_url)
                 results.append((img_url, source.url))
                 if len(results) >= _MAX_IMAGES_PER_SESSION:
-                    logger.warning(
-                        "cv_agent.image_cap_reached",
-                        cap=_MAX_IMAGES_PER_SESSION,
-                    )
+                    logger.info("cv_agent.image_cap_reached", cap=_MAX_IMAGES_PER_SESSION)
                     return results
     return results

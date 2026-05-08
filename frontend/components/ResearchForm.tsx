@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AlertCircle, Loader2, Search } from "lucide-react";
+import { createClient } from "@/lib/supabase";
 
 const MIN_LENGTH = 10;
 const MAX_LENGTH = 2000;
@@ -22,9 +21,16 @@ interface ApiErrorResponse {
 
 export function ResearchForm() {
   const router = useRouter();
-  const [question, setQuestion] = useState("");
+  const searchParams = useSearchParams();
+  const [question, setQuestion] = useState(searchParams.get("q") ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Keep textarea in sync if the URL param changes (e.g., follow-up question clicked)
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q) setQuestion(q);
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -38,10 +44,23 @@ export function ResearchForm() {
     setIsSubmitting(true);
 
     try {
+      const supabase = createClient();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+
+      if (!token) {
+        setError("You must be logged in to start a research session.");
+        setIsSubmitting(false);
+        return;
+      }
+
       const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
       const response = await fetch(`${apiUrl}/api/research/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ question: question.trim() }),
       });
 
@@ -52,7 +71,7 @@ export function ResearchForm() {
       }
 
       const data = (await response.json()) as CreateResearchResponse;
-      router.push(`/research/${data.session_id}`);
+      router.push(`/research/${data.session_id}?q=${encodeURIComponent(question.trim())}`);
     } catch {
       setError("Network error. Please check your connection and try again.");
     } finally {
@@ -64,62 +83,50 @@ export function ResearchForm() {
   const isOverLimit = charCount > MAX_LENGTH;
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4 w-full max-w-2xl">
-      <div className="flex flex-col gap-2">
-        <label
-          htmlFor="research-question"
-          className="text-sm font-medium text-zinc-700"
-        >
-          Research question
-        </label>
-        <Textarea
-          id="research-question"
-          placeholder="e.g. What are the competitive dynamics in the B2B SaaS CRM market in 2026?"
+    <form onSubmit={handleSubmit} className="w-full">
+      <div
+        className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-colors ${
+          error
+            ? "border-red-300"
+            : "border-slate-200 focus-within:border-indigo-400 focus-within:shadow-md"
+        }`}
+      >
+        <textarea
+          placeholder="e.g. What are the competitive dynamics in the B2B SaaS CRM market in 2025, and which players are taking share?"
           value={question}
           onChange={(e) => {
             setQuestion(e.target.value);
             if (error) setError(null);
           }}
-          rows={5}
-          maxLength={MAX_LENGTH}
-          aria-describedby={error ? "question-error" : "char-count"}
-          aria-invalid={error !== null}
-          className={error ? "border-red-500 focus-visible:ring-red-500" : ""}
+          rows={4}
           disabled={isSubmitting}
+          className="w-full p-4 text-[15px] text-slate-900 placeholder:text-slate-400 leading-relaxed resize-none focus:outline-none bg-transparent"
+          aria-label="Research question"
         />
-        <div className="flex justify-between items-center">
-          {error ? (
-            <p id="question-error" className="text-sm text-red-600" role="alert">
-              {error}
-            </p>
-          ) : (
-            <span />
-          )}
-          <p
-            id="char-count"
-            className={`text-xs ml-auto ${
-              isOverLimit ? "text-red-600" : "text-zinc-400"
-            }`}
+        <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between gap-3">
+          <span className={`text-xs font-medium ${isOverLimit ? "text-red-500" : "text-slate-400"}`}>
+            {charCount.toLocaleString()} / {MAX_LENGTH.toLocaleString()}
+          </span>
+          <button
+            type="submit"
+            disabled={isSubmitting || isOverLimit || question.trim().length < MIN_LENGTH}
+            className="inline-flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
           >
-            {charCount} / {MAX_LENGTH}
-          </p>
+            {isSubmitting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" />
+            )}
+            {isSubmitting ? "Starting…" : "Research"}
+          </button>
         </div>
       </div>
-
-      <Button
-        type="submit"
-        disabled={isSubmitting || isOverLimit}
-        className="self-start"
-      >
-        {isSubmitting ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            <span>Researching…</span>
-          </>
-        ) : (
-          "Start research"
-        )}
-      </Button>
+      {error && (
+        <div className="flex items-start gap-2 mt-2.5 text-sm text-red-600">
+          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          {error}
+        </div>
+      )}
     </form>
   );
 }

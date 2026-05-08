@@ -7,7 +7,7 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import AgentError, AgentEvent, AgentFatalError, EventEmitter, ResearchAgent
+from app.agents.base import AgentEvent, AgentFatalError, EventEmitter, ResearchAgent
 from app.core.config import settings
 from app.models.source import Source
 
@@ -25,9 +25,15 @@ class WebSearchAgent(ResearchAgent):
         session_id: uuid.UUID,
         emitter: EventEmitter,
         db: AsyncSession,
+        tavily_api_key: str | None = None,
+        results_per_subtask: int = 10,
     ) -> None:
         super().__init__(session_id, emitter)
         self._db = db
+        self._tavily_api_key = (
+            tavily_api_key if tavily_api_key is not None else settings.tavily_api_key
+        )
+        self._results_per_subtask = results_per_subtask
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         sub_tasks: list[str] = input_data["sub_tasks"]
@@ -41,13 +47,54 @@ class WebSearchAgent(ResearchAgent):
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
         source_ids: list[uuid.UUID] = []
+        seen_urls: set[str] = set()
+
+        for idx, query in enumerate(sub_tasks):
+            await self.emitter.emit(AgentEvent(
+                session_id=self.session_id,
+                agent_type="web_search",
+                event_type="sub_task_started",
+                payload={"sub_task_index": idx, "query": query},
+            ))
 
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as http:
             tasks = [
-                self._search_sub_task(http, semaphore, idx, query, source_ids)
+                self._search_sub_task(http, semaphore, query)
                 for idx, query in enumerate(sub_tasks)
             ]
-            await asyncio.gather(*tasks)
+            task_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for idx, result in enumerate(task_results):
+            if isinstance(result, Exception):
+                error_msg = str(result)
+                logger.warning("web_search.sub_task_failed", idx=idx, error=error_msg)
+                await self.emitter.emit(AgentEvent(
+                    session_id=self.session_id,
+                    agent_type="web_search",
+                    event_type="sub_task_completed",
+                    payload={
+                        "sub_task_index": idx,
+                        "source_count": 0,
+                        "status": "failed",
+                        "error": error_msg,
+                    },
+                ))
+                continue
+
+            sub_task_source_ids = await self._store_sources(
+                idx, result, source_ids, seen_urls
+            )
+            await self.emitter.emit(AgentEvent(
+                session_id=self.session_id,
+                agent_type="web_search",
+                event_type="sub_task_completed",
+                payload={
+                    "sub_task_index": idx,
+                    "source_count": len(sub_task_source_ids),
+                    "status": "ok",
+                    "error": None,
+                },
+            ))
 
         await self._db.flush()
 
@@ -83,73 +130,36 @@ class WebSearchAgent(ResearchAgent):
         self,
         http: httpx.AsyncClient,
         semaphore: asyncio.Semaphore,
-        idx: int,
         query: str,
-        source_ids: list[uuid.UUID],
-    ) -> None:
-        await self.emitter.emit(AgentEvent(
-            session_id=self.session_id,
-            agent_type="web_search",
-            event_type="sub_task_started",
-            payload={"sub_task_index": idx, "query": query},
-        ))
-
-        try:
-            async with semaphore:
-                resp = await http.post(
-                    TAVILY_URL,
-                    headers={"Authorization": f"Bearer {settings.tavily_api_key}"},
-                    json={
-                        "query": query,
-                        "max_results": 10,
-                        "include_raw_content": True,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-            results: list[dict[str, Any]] = data.get("results", [])
-            sub_task_source_ids = await self._store_sources(idx, results, source_ids)
-
-            await self.emitter.emit(AgentEvent(
-                session_id=self.session_id,
-                agent_type="web_search",
-                event_type="sub_task_completed",
-                payload={
-                    "sub_task_index": idx,
-                    "source_count": len(sub_task_source_ids),
-                    "status": "ok",
-                    "error": None,
+    ) -> list[dict[str, Any]]:
+        async with semaphore:
+            resp = await http.post(
+                TAVILY_URL,
+                headers={"Authorization": f"Bearer {self._tavily_api_key}"},
+                json={
+                    "query": query,
+                    "max_results": self._results_per_subtask,
+                    "include_raw_content": True,
                 },
-            ))
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-        except (httpx.HTTPError, httpx.TimeoutException) as exc:
-            error_msg = str(exc)
-            logger.warning("web_search.sub_task_failed", idx=idx, error=error_msg)
-            await self.emitter.emit(AgentEvent(
-                session_id=self.session_id,
-                agent_type="web_search",
-                event_type="sub_task_completed",
-                payload={
-                    "sub_task_index": idx,
-                    "source_count": 0,
-                    "status": "failed",
-                    "error": error_msg,
-                },
-            ))
-            raise AgentError(f"Sub-task {idx} failed: {error_msg}") from exc
+        return list(data.get("results", []))
 
     async def _store_sources(
         self,
         sub_task_index: int,
         results: list[dict[str, Any]],
         source_ids: list[uuid.UUID],
+        seen_urls: set[str],
     ) -> list[uuid.UUID]:
         new_ids: list[uuid.UUID] = []
         for result in results:
             url: str = result.get("url", "")
-            if not url:
+            if not url or url in seen_urls:
                 continue
+            seen_urls.add(url)
 
             source = Source(
                 session_id=self.session_id,
