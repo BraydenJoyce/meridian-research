@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Path \"c:\\\\Projects\\\\meridian-research\" -Force)",
-      "Bash(Select-Object Name, PSIsContainer)"
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(python -c ' *)",
+      "Bash(npx tsc *)",
+      "Bash(python -c \"types=['hypothesis','metrics','chart_gallery','strategist']; [print\\(t, len\\(t\\), '<=20:', len\\(t\\)<=20\\) for t in types]\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/agents/cv_document.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('alembic/versions/0008_revenue_features.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; [print\\(f'OK {f}'\\) if ast.parse\\(open\\(f\\).read\\(\\)\\) else None for f in ['app/models/research_session.py','app/schemas/research_session.py','app/api/research.py','app/core/config.py']]\")",
+      "Bash(npm install *)",
+      "Bash(npm run *)"
     ]
   }
 }

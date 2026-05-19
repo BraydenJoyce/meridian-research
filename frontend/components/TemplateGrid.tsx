@@ -1,34 +1,35 @@
 "use client";
+
 import { useRouter } from "next/navigation";
 
 const TEMPLATES = [
-  { icon: "⚔️", category: "Competitive Analysis", query: "What are the competitive dynamics in [market] and which players are gaining share in 2025?" },
-  { icon: "📐", category: "Market Sizing", query: "What is the total addressable market for [sector] and what are the key growth drivers through 2027?" },
-  { icon: "🔍", category: "Due Diligence", query: "Provide a comprehensive due diligence report on [company] including financials, leadership, competitive position, and risks." },
-  { icon: "💻", category: "Tech Landscape", query: "What is the current technology landscape for [domain] and which vendors are leading in 2025?" },
-  { icon: "🚀", category: "GTM Strategy", query: "What go-to-market strategies are working best in [market segment] in 2025 and what channels are driving growth?" },
-  { icon: "⛓️", category: "Supply Chain Risk", query: "What are the key supply chain risks and vulnerabilities in the [industry] sector and how are leading companies responding?" },
-  { icon: "📋", category: "Regulatory Environment", query: "What is the current regulatory environment for [sector] and what policy changes are expected in 2025-2026?" },
-  { icon: "🎯", category: "M&A Target Analysis", query: "Identify the most attractive M&A targets in [industry] and analyze their strategic fit, valuation, and acquisition readiness." },
+  { label: "Competitive Analysis", query: "What are the competitive dynamics in the enterprise SaaS market and which players are gaining share in 2025?" },
+  { label: "Market Sizing", query: "What is the total addressable market for AI-powered legal tech software globally and what is the growth trajectory?" },
+  { label: "Due Diligence", query: "Conduct a due diligence analysis of Stripe including competitive position, financial health signals, and key risks." },
+  { label: "Tech Landscape", query: "What is the current landscape of vector database providers and how do they compare on performance, pricing, and enterprise adoption?" },
+  { label: "GTM Strategy", query: "What go-to-market strategies are most effective for B2B infrastructure software targeting mid-market companies in 2025?" },
+  { label: "Supply Chain Risk", query: "What are the key supply chain risks for semiconductor manufacturers and how are leading companies mitigating them?" },
+  { label: "Regulatory Watch", query: "What regulatory changes are expected in EU AI legislation in 2025 and how will they affect enterprise AI adoption?" },
+  { label: "M&A Targets", query: "Which cybersecurity companies under $500M market cap are the most likely M&A targets for large strategic acquirers in 2025?" },
 ];
 
 export default function TemplateGrid() {
   const router = useRouter();
+
   return (
-    <div className="w-full max-w-2xl">
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Or start with a template</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-        {TEMPLATES.map((t) => (
-          <button
-            key={t.category}
-            onClick={() => router.push(`/?q=${encodeURIComponent(t.query)}`)}
-            className="rounded-xl border border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm p-3 text-left transition-all cursor-pointer group"
-          >
-            <span className="text-xl">{t.icon}</span>
-            <p className="mt-2 text-xs font-semibold text-slate-700 group-hover:text-indigo-600 transition-colors leading-tight">{t.category}</p>
-          </button>
-        ))}
-      </div>
+    <div
+      className="flex gap-2 overflow-x-auto pb-1"
+      style={{ scrollbarWidth: "none", msOverflowStyle: "none" } as React.CSSProperties}
+    >
+      {TEMPLATES.map((t) => (
+        <button
+          key={t.label}
+          onClick={() => router.push(`/?q=${encodeURIComponent(t.query)}`)}
+          className="flex-shrink-0 px-3 py-1.5 rounded-full border border-white/[0.12] bg-white/[0.06] text-white/55 hover:bg-white/[0.12] hover:text-white/85 text-xs whitespace-nowrap transition-colors"
+        >
+          {t.label}
+        </button>
+      ))}
     </div>
   );
 }

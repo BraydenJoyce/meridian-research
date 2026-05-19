@@ -19,14 +19,19 @@ interface ApiErrorResponse {
   detail: string;
 }
 
-export function ResearchForm() {
+interface ResearchFormProps {
+  variant?: "dark" | "light";
+}
+
+export function ResearchForm({ variant = "light" }: ResearchFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [question, setQuestion] = useState(searchParams.get("q") ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Keep textarea in sync if the URL param changes (e.g., follow-up question clicked)
+  const dark = variant === "dark";
+
   useEffect(() => {
     const q = searchParams.get("q");
     if (q) setQuestion(q);
@@ -85,10 +90,14 @@ export function ResearchForm() {
   return (
     <form onSubmit={handleSubmit} className="w-full">
       <div
-        className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-colors ${
-          error
-            ? "border-red-300"
-            : "border-slate-200 focus-within:border-indigo-400 focus-within:shadow-md"
+        className={`rounded-2xl overflow-hidden transition-all ${
+          dark
+            ? "bg-white/[0.07] backdrop-blur-xl border border-white/[0.12] shadow-2xl focus-within:border-white/25"
+            : `bg-white border shadow-sm ${
+                error
+                  ? "border-red-300"
+                  : "border-slate-200 focus-within:border-indigo-400 focus-within:shadow-md"
+              }`
         }`}
       >
         <textarea
@@ -100,17 +109,39 @@ export function ResearchForm() {
           }}
           rows={4}
           disabled={isSubmitting}
-          className="w-full p-4 text-[15px] text-slate-900 placeholder:text-slate-400 leading-relaxed resize-none focus:outline-none bg-transparent"
+          className={`w-full p-4 text-[15px] leading-relaxed resize-none focus:outline-none bg-transparent ${
+            dark
+              ? "text-white placeholder:text-white/25"
+              : "text-slate-900 placeholder:text-slate-400"
+          }`}
           aria-label="Research question"
         />
-        <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between gap-3">
-          <span className={`text-xs font-medium ${isOverLimit ? "text-red-500" : "text-slate-400"}`}>
+        <div
+          className={`px-4 py-3 border-t flex items-center justify-between gap-3 ${
+            dark
+              ? "bg-white/[0.04] border-white/[0.08]"
+              : "bg-slate-50/80 border-slate-100"
+          }`}
+        >
+          <span
+            className={`text-xs font-medium ${
+              isOverLimit
+                ? "text-red-400"
+                : dark
+                ? "text-white/30"
+                : "text-slate-400"
+            }`}
+          >
             {charCount.toLocaleString()} / {MAX_LENGTH.toLocaleString()}
           </span>
           <button
             type="submit"
             disabled={isSubmitting || isOverLimit || question.trim().length < MIN_LENGTH}
-            className="inline-flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+            className={`inline-flex items-center gap-2 px-5 py-2 text-sm font-medium rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 ${
+              dark
+                ? "bg-indigo-500 hover:bg-indigo-400 text-white"
+                : "bg-indigo-600 hover:bg-indigo-700 text-white"
+            }`}
           >
             {isSubmitting ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -121,8 +152,13 @@ export function ResearchForm() {
           </button>
         </div>
       </div>
+
       {error && (
-        <div className="flex items-start gap-2 mt-2.5 text-sm text-red-600">
+        <div
+          className={`flex items-start gap-2 mt-2.5 text-sm ${
+            dark ? "text-red-400" : "text-red-600"
+          }`}
+        >
           <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           {error}
         </div>

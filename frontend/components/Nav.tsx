@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase";
-import { LayoutDashboard, LogOut, Plus, Zap } from "lucide-react";
+import { LayoutDashboard, LogOut, Plus } from "lucide-react";
 
 export function Nav() {
   const pathname = usePathname();
@@ -17,9 +17,7 @@ export function Nav() {
       setEmail(data.user?.email ?? null);
       setReady(true);
     });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
       setEmail(session?.user?.email ?? null);
     });
     return () => subscription.unsubscribe();
@@ -37,41 +35,44 @@ export function Nav() {
   if (pathname?.startsWith("/r/")) return null;
 
   return (
-    <header className="sticky top-0 z-40 h-14 bg-white/80 backdrop-blur-md border-b border-slate-200">
+    <header className="sticky top-0 z-40 h-14 bg-[#080810]/95 backdrop-blur-xl border-b border-white/[0.07]">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-full">
-        <Link href="/" className="flex items-center gap-2 font-bold text-lg">
-          <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white">
-            <Zap className="w-4 h-4" />
+
+        {/* Wordmark */}
+        <Link href="/" className="flex items-center gap-2.5 group">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-[6px] bg-gradient-to-br from-indigo-500 to-violet-600 text-white text-xs font-bold tracking-tight select-none">
+            M
           </span>
-          <span className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
+          <span className="text-white font-semibold text-[15px] tracking-tight">
             Meridian
           </span>
         </Link>
 
+        {/* Nav actions */}
         {ready && !isAuthPage && (
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-0.5">
             {email ? (
               <>
                 <Link
                   href="/dashboard"
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white/50 hover:text-white/90 rounded-lg transition-colors"
                 >
                   <LayoutDashboard className="w-3.5 h-3.5" />
                   Dashboard
                 </Link>
                 <Link
                   href="/"
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg transition-colors ml-1"
+                  className="flex items-center gap-1.5 ml-2 px-3.5 py-1.5 bg-white text-slate-900 hover:bg-white/90 text-sm font-medium rounded-full transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   New research
                 </Link>
                 <button
                   onClick={handleSignOut}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors ml-1"
                   title={`Signed in as ${email}`}
+                  className="flex items-center gap-2 ml-2 px-2.5 py-1.5 text-white/40 hover:text-white/80 rounded-lg transition-colors"
                 >
-                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold flex items-center justify-center">
+                  <span className="w-6 h-6 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[10px] font-semibold flex items-center justify-center">
                     {initials}
                   </span>
                   <LogOut className="w-3.5 h-3.5" />
@@ -81,19 +82,19 @@ export function Nav() {
               <>
                 <Link
                   href="/pricing"
-                  className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-sm text-white/50 hover:text-white/90 rounded-lg transition-colors"
                 >
                   Pricing
                 </Link>
                 <Link
                   href="/auth/login"
-                  className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-sm text-white/50 hover:text-white/90 rounded-lg transition-colors"
                 >
                   Sign in
                 </Link>
                 <Link
                   href="/auth/signup"
-                  className="px-3 py-1.5 text-sm bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg transition-colors ml-1"
+                  className="ml-2 px-3.5 py-1.5 text-sm bg-white text-slate-900 hover:bg-white/90 font-medium rounded-full transition-colors"
                 >
                   Sign up
                 </Link>
